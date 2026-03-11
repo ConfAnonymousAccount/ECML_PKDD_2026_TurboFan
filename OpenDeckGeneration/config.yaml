@@ -1,0 +1,47 @@
+n_sequences: 2
+sequence_length: 1000
+speed_strategy: "random"
+init_value: "zero"
+change_speed_occurrence: 100
+maintenance_interval: (200, 500)
+maintenance_coeff_range: (0.6, 0.8)
+context: "from_list"
+context_type: [Cruise_DeckSMR, Takeoff_DeckSMR, Climb1_DeckSMR, Climb2_DeckSMR]
+noise_type: "Bounded"
+noise_params: 
+  gamma: 0.03
+
+speed_probability_distribution:
+  deg_CmpFan_s_mapEff_in: [0.4,0.4,0.2]
+  deg_CmpFan_s_mapWc_in: [0.4,0.4,0.2]
+  deg_CmpBst_s_mapEff_in: [0.4,0.4,0.2]
+  deg_CmpBst_s_mapWc_in: [0.4,0.4,0.2]
+  deg_CmpH_s_mapEff_in: [0.2,0.2,0.6]
+  deg_CmpH_s_mapWc_in: [0.2,0.2,0.6]
+  deg_TrbH_s_mapEff_in: [0.4,0.4,0.2]
+  deg_TrbH_s_mapWc_in: [0.4,0.4,0.2]
+  deg_TrbL_s_mapEff_in: [0.4,0.4,0.2]
+  deg_TrbL_s_mapWc_in: [0.4,0.4,0.2]
+
+speed_params:
+  slow:
+    mean_slope: -5e-3
+    std_slope: 1e-3
+  normal:
+    mean_slope: -1e-2
+    std_slope: 2e-3
+  fast:
+    mean_slope: -4e-2
+    std_slope: 5e-3
+
+slope_noise:
+  mean: 0
+  std: 1.5e-2
+
+speed_division: 
+  factors: [1, 2, 3, 4]
+  distribution: [0.4, 0.2, 0.2, 0.2]
+
+n_jobs: 2
+save_path: "."
+file_name: "sequences"
