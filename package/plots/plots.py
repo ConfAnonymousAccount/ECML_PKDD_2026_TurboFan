@@ -1,0 +1,346 @@
+from typing import Optional
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from matplotlib.patches import Patch
+from odsmr.constants import STATE_BOUNDS
+
+
+def plot_trajectory_seaborn(trajectory, maintenance, filename=None, width=14, height=7, window=10):
+    """
+    Plots degradation trajectories with local ±window maintenance highlights.
+    The last column of `trajectory` must be a boolean maintenance array.
+    """
+
+    sns.set_theme(style="darkgrid", context="paper")
+
+    indicators = list(STATE_BOUNDS.keys())
+
+    # Separate indicators and maintenance flag
+    maintenance = maintenance.astype(bool)
+    Y = trajectory
+
+    T = len(Y)
+    x = np.arange(T)
+
+    fig, ax = plt.subplots(figsize=(width, height))
+    palette = sns.color_palette("tab10", Y.shape[1])
+
+    # Plot trajectories
+    for i in range(Y.shape[1]):
+        ax.plot(
+            x,
+            Y[:, i],
+            label=indicators[i],
+            color=palette[i],
+            linewidth=2,
+            alpha=0.9
+        )
+
+    # --- Highlight ±window around each maintenance event --------------------
+    highlight_color = "#DDAA77"  # soft brown/orange like in your sample
+    highlight_alpha = 0.25
+
+    maintenance_indices = np.where(maintenance)[0]
+    added_legend = False
+
+    for t in maintenance_indices:
+        start = max(0, t - window)
+        end   = min(T - 1, t + window)
+        ax.axvspan(
+            start, end,
+            color=highlight_color,
+            alpha=highlight_alpha,
+            zorder=0,
+            label="Maintenance (±10 steps)" if not added_legend else None
+        )
+        added_legend = True
+
+    # Labels & Title
+    # ax.set_title("Degradation Trajectory", fontsize=18, weight="bold")
+    ax.set_xlabel("Time Step", fontsize=14)
+    ax.set_ylabel("Indicator Value", fontsize=14)
+
+    ax.set_xlim(0, len(trajectory))
+
+    # Legend (both health indicators + maintenance)
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(
+        handles,
+        labels,
+        title="Health Indicators",
+        loc="lower left",
+        frameon=True,
+        fontsize=10,
+        title_fontsize=12
+    )
+
+    sns.despine()
+    plt.tight_layout()
+    if filename is not None:
+        plt.savefig("trajectory.pdf", bbox_inches="tight", pad_inches=0)
+    plt.show()
+    
+    
+def plot_measures_seaborn(sequence, input_feautres, filename=None):
+    """
+    Seaborn-based visualization of 7 sensor measurements
+    with only one x-axis label per row and one y-axis label per column.
+    All ticks are preserved.
+    """
+    sns.set_theme(style="darkgrid", context="paper")  
+    n_sensors = len(input_feautres)
+
+    fig, axs = plt.subplots(4, 7, figsize=(14, 7))
+    axs = axs.flatten()
+
+    palette = sns.color_palette("Dark2", n_sensors)
+
+    for sensor_id in range(n_sensors):
+        ax = axs[sensor_id]
+        label = input_feautres[sensor_id]
+
+        ax.plot(
+            sequence[:, sensor_id],
+            color=palette[sensor_id],
+            linewidth=1.4,
+            alpha=0.95
+        )
+
+        ax.set_title(label, fontsize=12, weight="bold")
+        ax.grid(True, alpha=0.3)
+
+        row = sensor_id // 4   # 0 or 1
+        col = sensor_id % 7    # 0,1,2,3
+
+        # ---- Y-axis labels: only at the leftmost column ----
+        if col == 0:
+            ax.set_ylabel("Value", fontsize=10)
+        else:
+            ax.set_ylabel(None)         # hide label
+            # KEEP TICKS → do NOT remove them
+            ax.tick_params(axis="y", labelleft=True)
+
+        # ---- X-axis labels: only at the bottom row ----
+        if row == 1:
+            ax.set_xlabel("Time Step", fontsize=10)
+        else:
+            ax.set_xlabel(None)         # hide label
+            # KEEP TICKS → do NOT remove them
+            ax.tick_params(axis="x", labelbottom=True)
+
+    # Hide the unused 8th panel
+    if n_sensors < len(axs):
+        for k in range(n_sensors, len(axs)):
+            axs[k].set_visible(False)
+
+    plt.tight_layout(pad=0.2)
+    if filename is not None:
+        plt.savefig(filename, dpi=300, bbox_inches="tight", pad_inches=0)
+    plt.show()
+    
+def plot_measures_distribution(df, variable_order, phase_order, save_path: Optional[str]=None):
+    sns.set_theme(style="ticks", palette="pastel")
+    fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+
+    sns.boxplot(
+        data=df,
+        x="variable",
+        y="value",
+        hue="phase",
+        order=variable_order,
+        hue_order=phase_order,
+        dodge=True,
+        ax=ax,
+        showfliers=False  # optional: hide outliers for cleaner look
+    )
+
+    ax.set_xlabel("Input variables")
+    ax.set_ylabel("Scaled values")
+    ax.tick_params(axis='x', rotation=25)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+    ax.legend(title="Phase", loc="upper right")#bbox_to_anchor=(1.01, 1), loc="upper left", borderaxespad=0.)
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches='tight')
+    plt.show()
+    
+def plot_indicators_distribution(df, output_features, save_path: Optional[str]=None):
+    sns.set_theme(style="ticks", palette="pastel")
+    fig, axs = plt.subplots(1,1, figsize=(10,4))
+    # sns.boxplot(outputs_scaled)
+    sns.boxplot(df[output_features])#, cut=0)
+    axs.set_xticks(range(10))
+    axs.set_xticklabels(output_features, rotation=25, ha="right")
+    plt.xlabel("Output variables")
+    plt.ylabel("Scaled values")
+    plt.grid()
+    if save_path is not None:
+        plt.savefig("outputs_distribution_bx.pdf", bbox_inches='tight')
+    plt.show()
+    
+def plot_obs_vs_pred(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    variable_names=None,
+    layout: str = "2x5",
+    x_label: str = "Time",
+    y_label: str = "Value",
+    palette=("C0", "C1"),      # Seaborn/Matplotlib named colors
+    linewidth: float = 1.8,
+    style: str = "whitegrid",  # seaborn style: "white", "whitegrid", "ticks", "darkgrid"
+    height_per_row: float = 2.6,
+    width_per_col: float = 3.8,
+    legend_loc: str = "bottom",  # "bottom" | "top" | "right"
+    show: bool = True,
+    savepath: Optional[str]=None
+):
+    """
+    Simple Seaborn-based multi-plot for (T, 10) observations vs predictions.
+    - 10 subplots, one per variable
+    - Single figure-level x/y labels
+    - One global legend placed outside to avoid overlaps
+    """
+    # --- Validate ---
+    if y_true.ndim != 2 or y_pred.ndim != 2:
+        raise ValueError("y_true and y_pred must be 2D arrays (T, 10).")
+    if y_true.shape != y_pred.shape:
+        raise ValueError("y_true and y_pred must have the same shape.")
+    T, D = y_true.shape
+    if D != 10:
+        raise ValueError(f"Expected second dimension = 10, got {D}.")
+
+    # Layout parsing
+    r_str, c_str = layout.lower().split("x")
+    n_rows, n_cols = int(r_str), int(c_str)
+    if n_rows * n_cols != D:
+        raise ValueError(f"layout {layout} must satisfy rows*cols == 10")
+
+    # Variable names
+    if variable_names is None:
+        variable_names = [f"Var {i+1}" for i in range(D)]
+    elif len(variable_names) != D:
+        raise ValueError("variable_names must have length 10")
+
+    # Seaborn theme
+    sns.set_theme(style=style, context="notebook")
+
+    # Figure size (a little extra height to avoid crowding)
+    figsize = (max(10, width_per_col * n_cols), max(4.5, height_per_row * n_rows) + 0.4)
+
+    # Constrained layout + tiny bottom/left margins for sup labels
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=figsize,
+        sharex=True, sharey=True,
+        constrained_layout=True,
+    )
+    axes = np.asarray(axes).reshape(n_rows, n_cols)
+
+    x = np.arange(T)
+    for idx in range(D):
+        r, c = divmod(idx, n_cols)
+        ax = axes[r, c]
+
+        # Seaborn lines
+        sns.lineplot(x=x, y=y_true[:, idx], ax=ax, color=palette[0], linewidth=linewidth, label="Observation")
+        sns.lineplot(x=x, y=y_pred[:, idx], ax=ax, color=palette[1], linewidth=linewidth, label="Prediction", alpha=0.95)
+
+        # Title with a bit of padding (prevents touching legend/title region)
+        ax.set_title(str(variable_names[idx]), fontsize=11, pad=8)
+
+        # Grid (major + minor)
+        ax.minorticks_on()
+        ax.grid(True, which="major", linestyle=":", alpha=0.6)
+        ax.grid(True, which="minor", linestyle=":", alpha=0.25)
+
+        # Only show bottom row x tick labels / left column y tick labels (cleaner)
+        if r != n_rows - 1:
+            ax.tick_params(labelbottom=False)
+        if c != 0:
+            ax.tick_params(labelleft=False)
+        
+        if ax.legend_:
+            ax.legend_.remove()
+
+    # Build a single legend from the first axes
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+
+    if legend_loc == "bottom":
+        fig.legend(handles, labels,
+                   loc="center",
+                   bbox_to_anchor=(0.9, -0.035),  # Bottom outside
+                   bbox_transform=fig.transFigure,
+                   ncol=2, frameon=False)
+    elif legend_loc == "top":
+        fig.legend(handles, labels,
+                   loc="center",
+                   bbox_to_anchor=(0.5, 1.0),  # Top outside
+                   bbox_transform=fig.transFigure,
+                   ncol=2, frameon=False)
+    else:  # right
+        fig.legend(handles, labels,
+                   loc="center left",
+                   bbox_to_anchor=(1.0, 0.5),
+                   bbox_transform=fig.transFigure,
+                   ncol=1, frameon=False)
+
+    # Single global labels (slightly inset to avoid tick/label collisions)
+    fig.supxlabel(x_label, y=-0.035)  # a bit above bottom edge
+    fig.supylabel(y_label, x=-0.01)  # a bit to the right of left edge
+
+    # If you still see crowding with very long titles, you can bump figure height:
+    # fig.set_size_inches(fig.get_size_inches()[0], fig.get_size_inches()[1] + 0.3)
+
+    if savepath:
+        fig.savefig(savepath, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+
+    return fig, axes
+
+def plot_cv_losses(training_losses, validation_losses):
+    """
+    training_losses: list of lists (n_folds x n_epochs)
+    validation_losses: list of lists (n_folds x n_epochs)
+    """
+
+    train_losses = np.array(training_losses)
+    val_losses = np.array(validation_losses)
+
+    train_mean = train_losses.mean(axis=0)
+    train_std = train_losses.std(axis=0)
+
+    val_mean = val_losses.mean(axis=0)
+    val_std = val_losses.std(axis=0)
+
+    epochs = np.arange(1, len(train_mean) + 1)
+
+    plt.figure(figsize=(8, 5))
+
+    # Train
+    plt.plot(epochs, train_mean, label="Train Loss (Mean)")
+    plt.fill_between(
+        epochs,
+        train_mean - train_std,
+        train_mean + train_std,
+        alpha=0.3
+    )
+
+    # Validation
+    plt.plot(epochs, val_mean, label="Validation Loss (Mean)")
+    plt.fill_between(
+        epochs,
+        val_mean - val_std,
+        val_mean + val_std,
+        alpha=0.3
+    )
+
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("5-Fold Cross Validation (Mean ± Std)")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.4)
+
+    plt.tight_layout()
+    plt.show()
