@@ -1,4 +1,5 @@
 from typing import Optional
+from typing import Sequence, Optional, Union
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -344,3 +345,300 @@ def plot_cv_losses(training_losses, validation_losses):
 
     plt.tight_layout()
     plt.show()
+
+def plot_multiple_obs_vs_pred(
+    y_true: np.ndarray,                         # (T, D)
+    y_pred: np.ndarray,                         # (T, D) OR (n_models, T, D)
+    variable_names: Optional[Sequence[str]] = None,
+    model_names: Optional[Sequence[str]] = None,
+    variables: Optional[Sequence[Union[int, str]]] = None,  # indices or names to plot
+    layout: str = "auto",                       # "auto" or like "2x3"
+    x_label: str = "Time",
+    y_label: str = "Value",
+
+    # --- Color & style controls ---
+    palette: Union[str, Sequence] = "colorblind",   # good default for distinguishability
+    linewidth: float = 1.8,                         # base linewidth for models
+    alpha: float = 0.95,                             # kept for backward compat (not used if model_alpha given)
+    model_alpha: Optional[Sequence[float]] = None,   # per-model alpha, e.g. [0.9, 0.7, 0.5]
+    model_linestyles: Optional[Sequence[str]] = None,# e.g. ["solid", "dashed", "dashdot", (0, (1,1))]
+    model_markers: Optional[Sequence[Optional[str]]] = None, # e.g. ["o", "s", "D", None]
+    marker_every: Optional[int] = None,              # e.g. 10 (show marker every N points)
+    obs_color: Optional[str] = "black",
+    obs_linewidth: float = 2.3,
+    obs_style: str = "solid",                        # style for observation line
+    obs_alpha: float = 1.0,
+
+    style: str = "whitegrid",                   # seaborn style: "white", "whitegrid", "ticks", "darkgrid"
+    height_per_row: float = 2.6,
+    width_per_col: float = 3.8,
+    legend_loc: str = "bottom",                 # "bottom" | "top" | "right"
+    legend_ncol: Optional[int] = None,          # columns in legend
+    show: bool = True,
+    savepath: Optional[str] = None,
+
+    # Optional: emphasize one model by index
+    highlight_model: Optional[int] = None,      # e.g., 0 to highlight first model
+    highlight_linewidth: float = 2.6,
+    highlight_alpha: float = 1.0,
+):
+    """
+    Seaborn-based multi-plot for observations vs predictions with clarity-focused styling.
+
+    Key features:
+    - Plot a subset of variables with `variables` (indices or names).
+    - Multi-model support: y_pred can be (T, D) or (n_models, T, D).
+    - Distinguish models using alpha, line style, markers, and colorblind-friendly palette.
+    - Global legend outside the axes; observation line is thicker and on top.
+
+    Returns
+    -------
+    fig, axes
+    """
+
+    # --- Validate y_true ---
+    if y_true.ndim != 2:
+        raise ValueError("y_true must be a 2D array of shape (T, D).")
+    T, D = y_true.shape
+
+    # --- Normalize y_pred to (n_models, T, D) ---
+    if y_pred.ndim == 2:
+        if y_pred.shape != (T, D):
+            raise ValueError("When y_pred is 2D, it must match y_true shape (T, D).")
+        y_pred_models = y_pred[None, ...]  # (1, T, D)
+    elif y_pred.ndim == 3:
+        if y_pred.shape[1:] != (T, D):
+            raise ValueError("When y_pred is 3D, it must be (n_models, T, D) matching y_true.")
+        y_pred_models = y_pred
+    else:
+        raise ValueError("y_pred must be either (T, D) or (n_models, T, D).")
+    n_models = y_pred_models.shape[0]
+
+    # --- Variable names ---
+    if variable_names is None:
+        variable_names = [f"Var {i+1}" for i in range(D)]
+    elif len(variable_names) != D:
+        raise ValueError("variable_names must have length equal to D.")
+
+    # --- Select subset of variables ---
+    if variables is None:
+        idx_list = list(range(D))
+    else:
+        idx_list = []
+        for v in variables:
+            if isinstance(v, int):
+                if not (0 <= v < D):
+                    raise ValueError(f"Variable index {v} out of range [0, {D-1}].")
+                idx_list.append(v)
+            elif isinstance(v, str):
+                try:
+                    idx_list.append(variable_names.index(v))
+                except ValueError:
+                    raise ValueError(f"Variable name '{v}' not found in variable_names.")
+            else:
+                raise TypeError("Each entry in `variables` must be int or str.")
+        # deduplicate preserving order
+        seen = set()
+        idx_list = [i for i in idx_list if not (i in seen or seen.add(i))]
+
+    K = len(idx_list)
+    if K == 0:
+        raise ValueError("No variables selected to plot.")
+
+    # Slice data to selected variables
+    y_true_sel = y_true[:, idx_list]                 # (T, K)
+    y_pred_sel = y_pred_models[:, :, idx_list]       # (n_models, T, K)
+    variable_names_sel = [variable_names[i] for i in idx_list]
+
+    # --- Model names ---
+    if model_names is None:
+        model_names = [f"Model {i+1}" for i in range(n_models)]
+    else:
+        if len(model_names) != n_models:
+            raise ValueError("model_names length must match n_models.")
+
+    # --- Theme ---
+    sns.set_theme(style=style, context="notebook")
+
+    # --- Colors: 1 for obs + 1 per model ---
+    def _resolve_palette(pal, n_needed):
+        if isinstance(pal, str):
+            return list(sns.color_palette(pal, n_needed))
+        cols = list(pal)
+        if len(cols) < n_needed:
+            cols.extend(sns.color_palette("tab10", n_needed - len(cols)))
+        return cols[:n_needed]
+
+    colors = _resolve_palette(palette, n_models + 1)  # [obs_color, m1, m2, ...]
+    if obs_color is not None:
+        colors[0] = obs_color
+
+    # --- Alpha (transparency) handling ---
+    if model_alpha is None:
+        # default: fade later models a bit more
+        # e.g., for 3 models -> [0.95, 0.75, 0.6]
+        if n_models == 1:
+            alpha_list = [0.9]
+        else:
+            base = 0.95
+            step = 0.25 / max(1, n_models - 1)
+            alpha_list = [max(0.4, base - i * step) for i in range(n_models)]
+    else:
+        if len(model_alpha) != n_models:
+            raise ValueError("model_alpha length must match n_models.")
+        alpha_list = list(model_alpha)
+
+    # --- Line styles (distinct patterns help a lot) ---
+    if model_linestyles is None:
+        # Common distinct styles; repeat if needed
+        base_styles = ["solid", "dashed", "dashdot", (0, (1, 1)), (0, (3, 1, 1, 1))]
+        model_linestyles = [base_styles[i % len(base_styles)] for i in range(n_models)]
+    else:
+        if len(model_linestyles) != n_models:
+            raise ValueError("model_linestyles length must match n_models.")
+
+    # --- Markers (optional) ---
+    if model_markers is not None and len(model_markers) != n_models:
+        raise ValueError("model_markers length must match n_models when provided.")
+
+    # --- Layout ---
+    if layout == "auto":
+        cols = int(np.ceil(np.sqrt(K)))
+        rows = int(np.ceil(K / cols))
+        n_rows, n_cols = rows, cols
+    else:
+        try:
+            r_str, c_str = layout.lower().split("x")
+            n_rows, n_cols = int(r_str), int(c_str)
+        except Exception:
+            raise ValueError("layout must be 'auto' or a string like '2x3'.")
+        if n_rows * n_cols != K:
+            raise ValueError(f"layout {layout} must satisfy rows*cols == {K}.")
+
+    # --- Figure ---
+    figsize = (
+        max(6.0, width_per_col * n_cols),
+        max(3.6, height_per_row * n_rows) + 0.4,
+    )
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=figsize,
+        sharex=True, sharey=True,
+        constrained_layout=True,
+    )
+    axes = np.asarray(axes)
+    if axes.ndim == 1:
+        axes = axes.reshape(n_rows, n_cols)
+
+    x = np.arange(T)
+
+    # --- Plot ---
+    for plot_idx in range(K):
+        r, c = divmod(plot_idx, n_cols)
+        ax = axes[r, c]
+
+        # 1) Models first (lower zorder), so observation stays clearly on top
+        for m in range(n_models):
+            lw = highlight_linewidth if (highlight_model is not None and m == highlight_model) else linewidth
+            a = highlight_alpha if (highlight_model is not None and m == highlight_model) else alpha_list[m]
+            ls = model_linestyles[m]
+            mk = None if model_markers is None else model_markers[m]
+
+            sns.lineplot(
+                x=x,
+                y=y_pred_sel[m, :, plot_idx],
+                ax=ax,
+                color=colors[m + 1],
+                linewidth=lw,
+                alpha=a,
+                linestyle=ls,
+                marker=mk,
+                markevery=marker_every if mk is not None else None,
+                label=model_names[m],
+                zorder=2,  # below observation
+            )
+
+        # 2) Observation last (higher zorder, thicker)
+        sns.lineplot(
+            x=x,
+            y=y_true_sel[:, plot_idx],
+            ax=ax,
+            color=colors[0],
+            linewidth=obs_linewidth,
+            alpha=obs_alpha,
+            linestyle=obs_style,
+            label="Observation",
+            zorder=3,
+        )
+
+        # Title & grid
+        ax.set_title(str(variable_names_sel[plot_idx]), fontsize=14, pad=8)
+        ax.minorticks_on()
+        ax.grid(True, which="major", linestyle=":", alpha=0.6)
+        ax.grid(True, which="minor", linestyle=":", alpha=0.25)
+
+        # Clean ticks
+        if r != n_rows - 1:
+            ax.tick_params(labelbottom=False)
+        if c != 0:
+            ax.tick_params(labelleft=False)
+
+        # Remove local legends
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+
+    # Hide unused cells (when layout auto makes extra)
+    total_cells = n_rows * n_cols
+    if total_cells > K:
+        for extra_idx in range(K, total_cells):
+            r, c = divmod(extra_idx, n_cols)
+            axes[r, c].axis("off")
+
+    # --- Legend (build from first data axes) ---
+    first_ax = None
+    for ax in axes.flat:
+        if ax.has_data():
+            first_ax = ax
+            break
+    handles, labels = first_ax.get_legend_handles_labels()
+
+    if legend_ncol is None:
+        legend_ncol = min(max(2, len(labels)), 5)
+
+    if legend_loc == "bottom":
+        fig.legend(
+            handles, labels,
+            loc="center",
+            bbox_to_anchor=(0.82, -0.065),  # Bottom outside
+            ncol=legend_ncol,
+            frameon=False,
+            fontsize=14
+        )
+    elif legend_loc == "top":
+        fig.legend(
+            handles, labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=legend_ncol,
+            frameon=False,
+        )
+    else:  # right
+        fig.legend(
+            handles, labels,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            ncol=1,
+            frameon=False,
+        )
+
+    # Global labels
+    fig.supxlabel(x_label, y=-0.085)
+    fig.supylabel(y_label, x=-0.01)
+
+    if savepath:
+        fig.savefig(savepath, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+
+    return fig, axes
